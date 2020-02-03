@@ -1,0 +1,444 @@
+---
+title: "Megeno"
+author: "Shaman Narayanasamy"
+date: "5/3/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+If packages are not loaded, then they will be installed automatically.
+```{r message=F, warning=F}
+packs <- c("tidyverse", 
+           "stringr", 
+           "magrittr", 
+           "reshape2", 
+           "ggplot2", 
+           "ggforce", 
+           "VennDiagram", 
+           "gplots", 
+           "gtools", 
+           "eulerr", 
+           "rJava", 
+           "plotly", 
+           "grid",
+           "gridExtra", 
+           "ggpubr", 
+           "ggrepel", 
+           "cowplot", 
+           "egg", 
+           "grDevices", 
+           "RColorBrewer", 
+           "tidyverse", 
+           "readxl", 
+           "stringr", 
+           "reshape2", 
+           "colorspace", 
+           "sunburstR", 
+           "networkD3", 
+           "RColorBrewer",
+           "UpSetR",
+           "forcats",
+           "ggmap",
+           "maps",
+           "mapdata",
+           "mapproj",
+           "RCurl",
+           "treemap",
+           "googlesheets"
+           )
+
+for (i in 1:length(packs))
+{
+  if(packs[i] %in% rownames(installed.packages()) == FALSE) 
+  {
+    install.packages(packs[i], dependencies = T)
+  }
+  library(packs[i], character.only = TRUE)
+}
+
+
+devtools::source_url("https://gist.githubusercontent.com/benmarwick/2a1bb0133ff568cbe28d/raw/fb53bd97121f7f9ce947837ef1a4c65a73bffb3f/geom_flat_violin.R")
+```
+
+# Create functions
+## Save images in pdf and png with date and time stamp
+```{r}
+save_image = function(plot_variable, additional_text = ""){ 
+  Sys.Date() %>% 
+  format(format = "%Y%M%d") -> var_date
+  Sys.time() %>% 
+  format(format = "%H%M") -> var_time
+  
+  ggsave(paste(deparse(substitute(plot_variable)), "-", var_date, "_", var_time, additional_text, '.pdf', sep=""), plot_variable)
+  ggsave(paste(deparse(substitute(plot_variable)), "-", var_date, "_", var_time, additional_text, '.png', sep=""), plot_variable)
+}
+
+name_image = function(plot_variable, additional_text = ""){ 
+  Sys.Date() %>% 
+  format(format = "%Y%M%d") -> var_date
+  Sys.time() %>% 
+  format(format = "%H%M") -> var_time
+ 
+  paste(deparse(substitute(plot_variable)), "-", var_date, "_", var_time, additional_text, sep="")
+}
+```
+
+# Read survey data
+```{r}
+gs_ss <- gs_url("https://docs.google.com/spreadsheets/d/17gIPk6mklLKrmf7wGBQh_bjBSH0EvwqUF--wM5i2OGw/edit#gid=564201092")
+```
+# Respondent profile
+```{r}
+respondent_palette = brewer.pal(9, "Greens") [c(4:9)]
+
+gs_read(gs_ss, ws = "Respondent_profile", na = c("NA"), n_max = 39) %>% 
+  select(type = `Primary function within sequencing institution`) %>% 
+  mutate_at(vars(type), replace_na, "Other") %>% 
+  group_by(type) %>% 
+  summarise(count = n()) %>% 
+  arrange(count) %>% 
+  mutate(ymax = cumsum(count)) %>% # Compute the cummulative bottom for each rectangle
+  mutate(ymin = c(0, head(ymax, n=-1))) %>%  # Compute the bottom of each rectangle
+  mutate(labelPosition = (ymax + ymin) / 2) %>% # Compute label position
+  mutate(label = paste0(count)) %>%  # Add new column for label. For now, it is only the number of institutions
+  ungroup() %>% 
+  ggplot(aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = type, label = count)) + 
+  geom_rect(colour = NA) +
+  geom_text(x = 3.5, aes(y = labelPosition, label = label), size = 7, colour = "white") +
+  coord_polar(theta = "y") +
+  scale_fill_manual(values = brewer.pal(9, "Greens")[c(5,9,8,6,7,4)]) + # ATTENTION: Fill values were hardcoded
+  guides(fill = guide_legend(title = element_text("Respondent profile"))) +
+  xlim(c(2,4)) +
+  theme_void() + 
+  theme(legend.position = "right") -> resp_profile
+
+save_image(resp_profile)
+```
+
+# Institutional profiles
+## Institutions interviewed in Europe
+```{r}
+
+gs_read(gs_ss, ws = "Organisational_information", skip = 2, na = c("NA"), n_max = 33) %>%  
+  select(ID, Public, Private, "For-profit", "Non-profit", Consortium) %>% 
+  rename(Commercial = `For-profit`) %>% 
+  rename(NonProfit = `Non-profit`) %>% 
+  mutate_at(vars(-ID), str_replace_all, c("Yes"), c("1")) %>% 
+  mutate(NonProfit = ifelse(Private == 1 & NonProfit == 1, 1, NA)) %>% 
+  select(-Private) %>% 
+  gather(type, value, -ID) %>% 
+  mutate(value = replace_na(value, 0)) %>%
+  mutate(value = as.numeric(value)) %>%  
+  group_by(type) %>% summarise(sum = sum(value, na.rm = T)) %>% 
+  mutate(fraction = sum/sum(sum, na.rm = T)) %>% # Compute percentages
+  arrange(sum) %>% 
+  mutate(ymax = cumsum(sum))  %>% # Compute the cummulative bottom for each rectangle
+  mutate(ymin = c(0, head(ymax, n=-1))) %>%  # Compute the bottom of each rectangle
+  mutate(labelPosition = (ymax + ymin) / 2) %>% # Compute label position
+  mutate(label = paste0(sum)) %>%  # Add new column for label. For now, it is only the number of institutions
+  ggplot(aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = type, label = sum)) + 
+  geom_rect(colour = NA) +
+  geom_text(x = 3.5, aes(y = labelPosition, label = label), size = 7, colour = "white") +
+  coord_polar(theta = "y") +
+  scale_fill_manual(label = c("Commercial", "Consortium", "Not-for-profit", "Public"), values = brewer.pal(10, "Blues") [c(8,9,6,4)]) + # ATTENTION: Fill values were hardcoded
+  guides(fill = guide_legend(title = element_text("Organisation type"))) +
+  xlim(c(2,4)) +
+  theme_void() + 
+  theme(legend.position = "right") -> org_type 
+
+save_image(org_type)
+```
+
+## Clinical vs research
+```{r}
+gs_read(gs_ss, ws = "Organisational_information", skip = 2, na = c("NA"), n_max = 33) %>%  
+  select(ID, Clinical, Research) %>% 
+  mutate_at(vars(-ID), str_replace_all, c("Yes"), c("1")) %>% 
+  mutate_at(vars(-ID), as.numeric) %>% 
+  mutate_at(vars(-ID), replace_na, 0) %>% 
+  mutate(Both = ifelse(Research == 1 & Clinical == 1, 1, 0)) %>% 
+  mutate(Clinical = ifelse(Both == 1, 0, Clinical)) %>% 
+  mutate(Research = ifelse(Both == 1, 0, Research)) %>%
+  gather(type, value, -ID) %>% 
+  group_by(type) %>% summarise(sum = sum(value, na.rm = T)) %>% 
+  mutate(fraction = sum/sum(sum, na.rm = T)) %>% # Compute percentages
+  arrange(sum) %>% 
+  mutate(ymax = cumsum(sum))  %>% # Compute the cummulative bottom for each rectangle
+  mutate(ymin = c(0, head(ymax, n=-1))) %>%  # Compute the bottom of each rectangle
+  mutate(labelPosition = (ymax + ymin) / 2) %>% # Compute label position
+  mutate(label = paste0(sum)) %>%  # Add new column for label. For now, it is only the number of institutions
+  ggplot(aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = type, label = sum)) + 
+  geom_rect(colour = NA) +
+  geom_text(x = 3.5, aes(y = labelPosition, label = label), size = 7, colour = "white") +
+  coord_polar(theta = "y") +
+  scale_fill_manual(label = c("Clinical & Research", "Clinical", "Research"), values = brewer.pal(10, "Reds") [c(8,6,4)]) + # ATTENTION: Fill values were hardcoded
+  scale_fill_manual(values = brewer.pal(10, "Reds") [c(8,6,4)]) + # ATTENTION: Fill values were hardcoded
+  guides(fill = guide_legend(title = element_text("Purpose"))) +
+  xlim(c(2,4)) +
+  theme_void() + 
+  theme(legend.position = "right") -> seq_purpose
+
+save_image(seq_purpose)
+```
+
+## Operational models
+```{r}
+#oper_models <-
+gs_read(gs_ss, ws = "Organisational_information", skip = 2, na = c("NA"), n_max = 33) %>%  
+  select(ID, Open, Dedicated, Integrated, Outsourced) %>% 
+  mutate_at(vars(-ID), str_replace_all, c("Yes"), c("1")) %>% 
+  mutate_all(as.numeric) %>% 
+  mutate_all(replace_na, 0, 0) %>% 
+  gather(type, value, -ID) %>% 
+  mutate(value = as.numeric(value)) %>%  
+  mutate(value = replace_na(value, 0)) %>%
+  spread(type, value) %>% 
+  #filter(Open == 1, Dedicated == 0, Integrated == 0, Outsourced == 0) %>% nrow()
+  column_to_rownames("ID") %>%   
+      upset(., 
+        keep.order = T,
+        sets = c(
+          "Open", 
+          "Dedicated", 
+          "Integrated", 
+          "Outsourced"),
+        order.by = "freq",
+        sets.bar.color = c("darkgreen", "darkgreen", "darkgreen", "darkgreen")
+        ) 
+
+pdf(name_image(oper_models, '.pdf'), height = 3, width = 5); print(oper_models); dev.off()
+```
+
+# Theoretical sequencing capacity vs throughput (i.e. realized sequencing capacity)
+```{r}
+# Sequencing capacity (70%) vs throughput
+gs_read(gs_ss, ws = "Sequencing_throughput", skip = 2, na = c("NA"), n_max = 33) %>%  
+select(ID, `2018_cap` = `Present (during interview)`, `>2019_cap` = `Future (post-interview)`, `2015_tput`  = `2015_2`, `2016_tput` = `2016_2`, `2017_tput` = `2017_2`, `2018_tput` = `2018_2`, `>2019_tput` = `2019 onward_2`) %>% 
+#dat %>% select(ID, `2018_cap` = `Present annual capacity (GBs)`, `>2019_cap` = `Future annual capacity (GBs)`, `2015_tput`  = `2015_2`, `2016_tput` = `2016_2`, `2017_tput` = `2017_2`, `2018_tput` = `2018_2`, `>2019_tput` = `2019 onward_2`) %>% 
+  mutate(`2018_excess` = `2018_cap` - `2018_tput`) %>% 
+  mutate(`>2019_excess` = `>2019_cap` - `>2019_tput`) %>% 
+  gather(state, value, -ID) %>% 
+  separate(state, into = c("year", "metric"), sep = "_") %>% 
+  filter(metric != "cap") %>% 
+  mutate_at(vars(metric), str_replace_all, c("tput" = "Internal throughput", "excess" = "Excess capacity")) %>% 
+  mutate(metric = ifelse(value < 0 & !is.na(value), "External throughput", metric)) %>%  
+  mutate(value = ifelse(value < 0 & !is.na(value), -value, value)) %>%  
+  select(-ID) %>% 
+  group_by(metric, year) %>% summarise(value = sum(value, na.rm = T)) %>% 
+  ggplot(aes(x = year, y = log10(value), fill = metric, alpha = metric)) + 
+  geom_bar(stat = "identity", position = "stack") +
+  #scale_fill_manual(values = c("Internal throughput" = "#19999A", "Excess capacity" = "#19999A", "External throughput" = "#19999A")) +
+  scale_fill_manual(values = c("Internal throughput" = "gray50", "Excess capacity" = "gray50", "External throughput" = "gray50")) +
+  scale_alpha_manual(values = c("Internal throughput" = 1, "Excess capacity" = 0.25, "External throughput" = 0.75)) +
+  ylab("log10 (giga bases)") + 
+  xlab("Year") +
+  guides(fill = guide_legend(title.theme = element_blank())) +
+  theme_bw() -> seq_cap
+
+ggsave(name_image(seq_cap, ".pdf"), seq_cap, height = 2.5, width = 7.5)
+```
+
+# Estimation of sequencing througput over the years and to date
+```{r}
+wes_colour <- "indianred"
+wgs_colour <- "seagreen"
+```
+### No. of responses for estimations individuals sequenced the year
+This table shows the number of responsents that were able to estimate the number of individuals sequenced for that particular year
+```{r}
+gs_read(gs_ss, ws = "Sequencing_throughput", skip = 2, na = c("NA"), n_max = 33) %>%  
+select(ID, `2015_wgs`  = `2015`, `2016_wgs` = `2016`, `2017_wgs` = `2017`, `2018_wgs` = `2018`, `2015_wes`  = `2015_1`, `2016_wes` = `2016_1`, `2017_wes` = `2017_1`, `2018_wes` = `2018_1`) %>% 
+  select(-ID) %>% 
+  summarise_all(funs(sum(!is.na(.)))) %>% 
+  gather(sequencing, responses) %>% 
+  separate(sequencing, into = c("year", "sequencing"), sep = "_") %>% 
+  mutate_at(vars(sequencing), str_replace_all, c("wgs" = "WGS", "wes" = "WES")) 
+```
+  
+### Estimations of people sequenced on a yearly basis
+```{r}
+gs_read(gs_ss, ws = "Sequencing_throughput", skip = 2, na = c("NA"), n_max = 33) %>%  
+select(ID, `2015_wgs`  = `2015`, `2016_wgs` = `2016`, `2017_wgs` = `2017`, `2018_wgs` = `2018`, `2015_wes`  = `2015_1`, `2016_wes` = `2016_1`, `2017_wes` = `2017_1`, `2018_wes` = `2018_1`) %>% 
+  gather(sequencing, value, -ID) %>% 
+  separate(sequencing, into = c("year", "sequencing"), sep = "_") %>% 
+  mutate_at(vars(sequencing), str_replace_all, c("wgs" = "WGS", "wes" = "WES")) %>% 
+  select(-ID) %>% 
+  ggplot(aes(x = year, y = value, fill = sequencing)) + 
+  geom_bar(stat = "identity", position = "dodge") + 
+  scale_fill_manual(values = c("WGS" = wgs_colour, "WES" = wes_colour)) +
+  ylab("Samples") + 
+  xlab("Year") +
+  theme_bw() -> seq_est
+
+ggsave(name_image(seq_est, ".pdf"), seq_est, height = 2.5, width = 5)
+```
+
+### No. of responses for estimations of individuals sequenced up to date of the interview and future projections
+This table shows the number of responsents that were able to estimate the number of individuals sequenced for that particular year
+```{r}
+gs_read(gs_ss, ws = "Sequencing_throughput", skip = 2, na = c("NA"), n_max = 33) %>%  
+select(ID, `>2019_wgs` = `2019 onward`, `<2018_wgs` = `Total sequenced (to date)`, `>2019_wes` = `2019 onward_1`, `<2018_wes` = `Total sequenced (to date)_1`) %>%
+  select(-ID) %>% 
+  summarise_all(funs(sum(!is.na(.)))) %>% 
+  gather(sequencing, responses) %>% 
+  separate(sequencing, into = c("year", "sequencing"), sep = "_") %>% 
+  mutate_at(vars(sequencing), str_replace_all, c("wgs" = "WGS", "wes" = "WES")) 
+```
+
+### Estimations of people sequenced up to date of the interview and future projections (post-interview)
+```{r}
+gs_read(gs_ss, ws = "Sequencing_throughput", skip = 2, na = c("NA"), n_max = 33) %>%  
+select(ID, `>2019_wgs` = `2019 onward`, `<2018_wgs` = `Total sequenced (to date)`, `>2019_wes` = `2019 onward_1`, `<2018_wes` = `Total sequenced (to date)_1`) %>%
+  gather(sequencing, value, -ID) %>% 
+  separate(sequencing, into = c("year", "sequencing"), sep = "_") %>% 
+  mutate_at(vars(sequencing), str_replace_all, c("wgs" = "WGS", "wes" = "WES")) %>% 
+  select(-ID) %>% 
+  ggplot(aes(x = year, y = value, fill = sequencing)) + 
+  geom_bar(stat = "identity", position = "dodge") + 
+  scale_fill_manual(values = c("WGS" = wgs_colour, "WES" = wes_colour)) +
+  ylab("Samples") + 
+  xlab("Year") +
+  theme_bw()  -> seq_toDate
+
+ggsave(name_image(seq_toDate, ".pdf"), seq_toDate, height = 2.5, width = 3)
+```
+
+
+# Data retention
+This plot has been deprecated as it is not used in the revised version of the manuscript.
+```{r}
+gs_read(gs_ss, ws = "Data_retention", skip = 2, na = c("NA"), n_max = 33) %>%  
+select(ID, BCL, FASTQ, BAM, `VCF/gVCF`, National = `National laws on data storage (years)`) %>% 
+  mutate_at(vars(National), str_replace_all, c("30 / 3 generations" = "120", "3 generations" = "120")) %>% 
+  mutate_at(vars(-ID), str_replace_all, c("indefinite" = as.character(max(as.numeric(.$National), na.rm = T) * 12 + 24), "evaluating" = "")) %>% 
+  mutate_at(vars(-ID), funs(as.numeric)) %>% 
+  mutate(National = National * 12) %>% 
+  gather(type, value, -ID) %>% 
+  ggplot(aes(type, value, fill = type)) + 
+  geom_flat_violin(position = position_nudge(x = .1, y = 0), color = NA, alpha = 0.75) + 
+  geom_point(aes(y = value, color = type, label = value), position = position_jitter(width = .1), size = .5, alpha = 1) +
+  scale_y_continuous(name = "Duration", 
+                     breaks = c(3, 6, 12, 24, 120, 360, 1200, 1404), # May be set dynamically
+                     labels = c("3 months", "6 months", "12 months", "24 months", "10 years", "30 years", "100 years", "indefinite")) +
+  scale_x_discrete(name = "Data format", limits = c("BCL", "FASTQ", "BAM", "VCF/gVCF", "National")) +
+  scale_colour_manual(values = c("National" = "gray27", "BCL" = "aquamarine4", "FASTQ" = "aquamarine3", "BAM" = "aquamarine2", "VCF/gVCF" = "aquamarine1")) +
+  scale_fill_manual(values = c("National" = "gray28", "BCL" = "aquamarine4", "FASTQ" = "aquamarine3", "BAM" = "aquamarine2", "VCF/gVCF" = "aquamarine1")) +
+  facet_zoom(ylim = c(0, 24), zoom.size = 0.5, horizontal = F, show.area = T) +
+  theme_bw() +
+  theme(
+  legend.position = "none",
+  plot.title = element_text(lineheight=.8, face="bold", size = 16),
+  panel.border = element_blank(),
+  panel.grid.major = element_blank(),
+  axis.line.x = element_line(colour = 'black', size=0.5, linetype='solid'),
+  axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
+  axis.text.x = element_text(angle = 45, hjust = 1),
+  axis.title.x = element_blank()) -> dat_retention
+
+ggsave(name_image(dat_retention, ".pdf"), dat_retention, height = 4, width = 6)
+```
+
+# Data retention 2
+```{r}
+gs_read(gs_ss, ws = "Data_retention", skip = 2, na = c("NA"), n_max = 34) %>%  
+select(ID, BCL, FASTQ, BAM, `VCF/gVCF`, National = `National laws on data storage (years)`, Internal = `Internal policies on data storage (years)`) %>% 
+  gather(Format, value, -ID) %>% filter(value != "", value != "evaluating") %>% 
+  mutate(value = recode(value,
+                        "0.25" = "3 months" , 
+                        "0.5" = "6 months" , 
+                        "3" = "3 months" , 
+                        "6" = "6 months" ,
+                        "12" = "12 months" ,
+                        "18" = "18 months" ,
+                        "120" = "10 years", 
+                        "360" = "30 years",
+                        "2" = "24 months" , 
+                        "5" = "5 years" , 
+                        "10" = "10 years", 
+                        "30" = "30 years",
+                        "50" = "50 years",
+                        "115" = "115 years"
+    )) %>% 
+  mutate(Format = fct_relevel(Format, "BCL", "FASTQ", "BAM", "VCF/gVCF", "National")) %>% 
+  mutate(value = fct_relevel(value, 
+                                    "3 months",
+                                    "6 months",
+                                    "12 months",
+                                    "18 months",
+                                    "24 months",
+                                    "5 years",
+                                    "10 years",
+                                    "30 years",
+                                    "50 years",
+                                    "115 years",
+                                    "3 generations",
+                                    "indefinite"
+                             )) %>% 
+  ggplot(aes(value)) + 
+  geom_histogram(aes(x = value, fill = Format), position = "dodge", stat = "count", size = .5, alpha = 0.75) +
+  facet_grid(. ~ value, scales = "free", space = "free") + 
+  scale_fill_manual(values = c("National" = "gray25", "Internal" = "gray50","BCL" = "aquamarine4", "FASTQ" = "aquamarine3", "BAM" = "aquamarine2", "VCF/gVCF" = "aquamarine1")) +
+  theme_bw() +
+  ylab("Count") +
+  theme(
+  plot.title = element_text(lineheight=.8, face="bold", size = 16),
+  panel.border = element_blank(),
+  panel.grid.major = element_blank(),
+  axis.line.x = element_line(colour = 'black', size=0.5, linetype='solid'),
+  axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
+  axis.text.x = element_text(angle = 45, hjust = 1),
+  axis.title.x = element_blank(),
+  strip.background = element_blank(),
+  strip.text.x = element_blank() 
+  ) -> dat_retention_v2
+
+ggsave(name_image(dat_retention_v2, ".pdf"), dat_retention_v2, height = 3, width = 9)
+```
+
+# Institutional profiles and access
+This plot needs the original data set to reproduce. The data in the supplementary tables have been dissociated.
+```{r}
+dat %>% select(ID, Public, Private, "For-profit", "Non-profit", Research, Clinical, Consortium, "Access cases", Open, Dedicated, Integrated, Outsourced) %>% 
+  rename(Access = `Access cases`) %>% 
+  mutate_at(vars(-Access), str_replace_all, c("Yes"), c("1")) %>% 
+  mutate(`Access` = replace_na(`Access`, 1)) %>% 
+  filter(Access >= 1) %>% # Only consider those institutions where there was access
+  rename(Commercial = `For-profit`) %>% 
+  rename(Non = `Non-profit`) %>% 
+  mutate_at(vars(-ID), str_replace_all, c("Yes"), c("1")) %>% 
+  mutate_all(as.numeric) %>% 
+  mutate(NonProfit = ifelse(Private == 1 & Non == 1, 1, 0)) %>% 
+  mutate(Public = ifelse(Public == 0 & Private == 1 & Non == 1, 0, 1)) %>% 
+  select(-Private, -Non) %>% 
+  mutate_all(replace_na, 0, 0) %>% 
+  gather(type, value, -ID, -Access) %>% 
+  mutate(value = as.numeric(value)) %>%  
+  mutate(value = replace_na(value, 0)) %>%
+  spread(type, value) %>% 
+  select(-Access) %>% 
+  column_to_rownames("ID") %>%   
+      upset(., 
+        keep.order = T,
+        point.size = 3.5,
+        sets = c(
+          "Open", 
+          "Dedicated", 
+          "Integrated", 
+          "Outsourced", 
+          "Research", 
+          "Clinical", 
+          "NonProfit",
+          "Public", 
+          "Consortium"),
+        order.by = "freq",
+        sets.bar.color = c("darkgreen", "darkgreen", "darkgreen", "darkgreen", "salmon", "salmon", "navy", "navy", "navy"),
+        text.scale = c(1.3, 1.3, 1, 1, 2, 0.75)
+        ) -> inst_access
+
+pdf(name_image(inst_access, '.pdf'), height = 6, width = 8); print(inst_access); dev.off()
+```
+
